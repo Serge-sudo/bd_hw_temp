@@ -1,0 +1,88 @@
+DROP TABLE IF EXISTS test_table;
+CREATE TABLE test_table (id SERIAL PRIMARY KEY, val INT);
+INSERT INTO test_table(val) VALUES (100), (200), (300);
+
+-- Кейс 1: Демонстрация "грязного чтения" (dirty read).
+-- В PostgreSQL READ UNCOMMITTED работает как READ COMMITTED, т.е. грязного чтения не будет.
+-- Но концептуально в других СУБД такая аномалия возможна.
+
+-- 1A: Аномалия при READ UNCOMMITTED (теоретически)
+-- В первой сессии (псевдокод):
+-- BEGIN TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+-- SELECT val FROM test_table WHERE id=1; -- Показывает val=100
+-- Во второй сессии:
+-- BEGIN; UPDATE test_table SET val=999 WHERE id=1; но НЕ COMMIT
+-- Возврат к первой сессии:
+-- SELECT val FROM test_table WHERE id=1; 
+-- Теоретически может показать 999, хотя это не зафиксированные изменения (грязное чтение).
+-- В PostgreSQL этого не случится, он покажет старое значение или заблокируется до коммита.
+-- COMMIT;
+
+-- 1B: Исправление при READ COMMITTED
+-- READ COMMITTED не покажет незакоммиченные изменения.
+-- Первая сессия:
+-- BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+-- SELECT val FROM test_table WHERE id=1; -- val=100
+-- Вторая сессия:
+-- BEGIN; UPDATE test_table SET val=777 WHERE id=1; НЕ COMMIT
+-- Первая сессия снова:
+-- SELECT val FROM test_table WHERE id=1; 
+-- Значение будет по-прежнему 100 (или транзакция будет ждать коммита), грязного чтения нет.
+-- COMMIT;
+
+-- Кейс 2: "Неповторяемое чтение" (non-repeatable read).
+-- В READ COMMITTED значения могут меняться между запросами одной транзакции.
+
+-- 2A: Аномалия при READ COMMITTED
+-- Первая сессия:
+-- BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+-- SELECT val FROM test_table WHERE id=1; -- Предположим val=100
+-- Вторая сессия:
+-- UPDATE test_table SET val=val+50 WHERE id=1; COMMIT; -- теперь val=150
+-- Первая сессия снова:
+-- SELECT val FROM test_table WHERE id=1; -- теперь 150, изменилось в той же транзакции
+-- COMMIT;
+
+-- Это "неповторяемое чтение": первый SELECT вернул 100, второй уже 150.
+
+-- 2B: Исправление при REPEATABLE READ
+-- Первая сессия:
+-- BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+-- SELECT val FROM test_table WHERE id=1; -- 100
+-- Вторая сессия:
+-- UPDATE test_table SET val=val+50 WHERE id=1; COMMIT; -- val=150 в системе
+-- Первая сессия снова:
+-- SELECT val FROM test_table WHERE id=1; -- всё ещё покажет 100, так как снимок транзакции не меняется
+-- COMMIT;
+
+-- Неповторяемого чтения нет, в пределах одной транзакции данные выглядят стабильными.
+
+-- Кейс 3: "Фантомное чтение" (phantom read).
+-- Теоретически REPEATABLE READ может допустить фантомы (новые строки, подходящие под условие),
+-- но в PostgreSQL REPEATABLE READ это фактически не допускает.
+-- Однако мы покажем концепцию.
+
+-- 3A: Аномалия при REPEATABLE READ (теоретически)
+-- Первая сессия:
+-- BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+-- SELECT val FROM test_table WHERE val > 100; -- Например, видим 200 и 300
+-- Вторая сессия:
+-- INSERT INTO test_table(val) VALUES(250); COMMIT;
+-- Первая сессия снова:ƒ
+-- SELECT val FROM test_table WHERE val > 100;
+-- Теоретически могли бы увидеть новую строку со значением 250 (фантом),
+-- но в PostgreSQL её не увидим. Однако в стандарте это возможно.
+-- COMMIT;
+
+-- 3B: Исправление при SERIALIZABLE
+-- Первая сессия:
+-- BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+-- SELECT val FROM test_table WHERE val > 100; -- 200, 300
+-- Вторая сессия:
+-- INSERT INTO test_table(val) VALUES(250); COMMIT;
+-- Первая сессия снова:
+-- SELECT val FROM test_table WHERE val > 100;
+-- В SERIALIZABLE либо не покажет новую строку, либо транзакцию заставит перестроиться, что может привести к ошибке сериализации.
+-- Таким образом фантомные чтения предотвращаются.
+-- COMMIT;
+

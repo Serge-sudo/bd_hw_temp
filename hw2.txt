@@ -1,0 +1,97 @@
+-- Создание необходимых расширений
+CREATE EXTENSION IF NOT EXISTS bloom;
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+-- Очистка
+DROP TABLE IF EXISTS test_table;
+NOTICE:  table "test_table" does not exist, skipping
+-- Создание таблицы
+CREATE TABLE test_table (
+    id SERIAL PRIMARY KEY,
+    col1 INTEGER,
+    col2 TEXT
+);
+-- Вставка данных
+INSERT INTO test_table (col1, col2)
+SELECT i, 'text ' || i::text
+FROM generate_series(1, 100000) AS i;
+-- Блок 1: Индексы по одному столбцу col1
+CREATE INDEX idx_block1_col1_btree ON test_table USING btree (col1);
+CREATE INDEX idx_block1_col1_hash ON test_table USING hash (col1);
+CREATE INDEX idx_block1_col1_bloom ON test_table USING bloom (col1) WITH (length=10, col1=2);
+CREATE INDEX idx_block1_col1_gist ON test_table USING gist (col1 gist_int4_ops);
+SELECT indexrelid::regclass AS index_name, pg_size_pretty(pg_relation_size(indexrelid)) AS size
+FROM pg_index
+WHERE indrelid = 'test_table'::regclass
+AND indexrelid::regclass::text LIKE '%block1%';
+      index_name       |  size   
+-----------------------+---------
+ idx_block1_col1_btree | 2208 kB
+ idx_block1_col1_hash  | 4112 kB
+ idx_block1_col1_bloom | 800 kB
+ idx_block1_col1_gist  | 4392 kB
+(4 rows)
+
+-- Блок 2: Индексы по одному столбцу col2
+CREATE INDEX idx_block2_col2_btree ON test_table USING btree (col2);
+CREATE INDEX idx_block2_col2_hash ON test_table USING hash (col2);
+CREATE INDEX idx_block2_col2_bloom ON test_table USING bloom (col2) WITH (length=10, col2=2);
+CREATE INDEX idx_block2_col2_gist ON test_table USING gist (col2 gist_text_ops);
+SELECT indexrelid::regclass AS index_name, pg_size_pretty(pg_relation_size(indexrelid)) AS size
+FROM pg_index
+WHERE indrelid = 'test_table'::regclass
+AND indexrelid::regclass::text LIKE '%block2%';
+      index_name       |  size   
+-----------------------+---------
+ idx_block2_col2_btree | 3104 kB
+ idx_block2_col2_hash  | 4112 kB
+ idx_block2_col2_bloom | 800 kB
+ idx_block2_col2_gist  | 5912 kB
+(4 rows)
+
+-- Блок 3: Индексы по двум столбцам (col1, col2)
+CREATE INDEX idx_block3_col1_col2_btree ON test_table USING btree (col1, col2);
+CREATE INDEX idx_block3_col1_col2_hash ON test_table USING hash (col1, col2);
+ERROR:  access method "hash" does not support multicolumn indexes
+CREATE INDEX idx_block3_col1_col2_bloom ON test_table USING bloom (col1, col2) WITH (length=10, col1=2, col2=2);
+CREATE INDEX idx_block3_col1_col2_gist ON test_table USING gist (col1 gist_int4_ops, col2 gist_text_ops);
+SELECT indexrelid::regclass AS index_name, pg_size_pretty(pg_relation_size(indexrelid)) AS size
+FROM pg_index
+WHERE indrelid = 'test_table'::regclass
+AND indexrelid::regclass::text LIKE '%block3%';
+         index_name         |  size   
+----------------------------+---------
+ idx_block3_col1_col2_btree | 3104 kB
+ idx_block3_col1_col2_bloom | 800 kB
+ idx_block3_col1_col2_gist  | 7952 kB
+(3 rows)
+
+-- Блок 4: Индексы по выражению lower(col2)
+CREATE INDEX idx_block4_expr_btree ON test_table USING btree (lower(col2));
+CREATE INDEX idx_block4_expr_hash ON test_table USING hash (lower(col2));
+CREATE INDEX idx_block4_expr_bloom ON test_table USING bloom ((lower(col2))) WITH (length=10, col1=2);
+CREATE INDEX idx_block4_expr_gist ON test_table USING gist ((lower(col2)) gist_text_ops);
+SELECT indexrelid::regclass AS index_name, pg_size_pretty(pg_relation_size(indexrelid)) AS size
+FROM pg_index
+WHERE indrelid = 'test_table'::regclass
+AND indexrelid::regclass::text LIKE '%block4%';
+      index_name       |  size   
+-----------------------+---------
+ idx_block4_expr_btree | 3104 kB
+ idx_block4_expr_hash  | 4112 kB
+ idx_block4_expr_bloom | 800 kB
+ idx_block4_expr_gist  | 5904 kB
+(4 rows)
+
+-- Вероятность коллизий в 32-битном пространстве хэшей для 2,000,000 ключей:
+-- Пусть M = 2^32 (число возможных хэш-значений), N = 2,000,000 (число уникальных ключей).
+-- Формула вероятности коллизий (аналог "задачи о дне рождения"):
+--   P(коллизия) = 1 - exp(-N*(N-1)/(2*M))
+-- При подстановке N=2,000,000, M=2^32:
+--   N*(N-1) ~ 4*10^12
+--   Делим на (2*M), где M ~8.58 *10^9, получаем ~466.2
+--   exp(-466.2) практически 0.
+-- Следовательно, P(коллизия) ~ 1, то есть при вставке 2 млн уникальных ключей в 32-битный хэш
+-- вероятность хотя бы одной коллизии почти гарантирована.
+--
+-- Это значит, что если бы мы использовали Bloom-фильтр с 32-битным хэшом
+-- для 2 млн уникальных ключей, столкновение хэшей практически неизбежно.

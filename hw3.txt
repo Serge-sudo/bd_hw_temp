@@ -1,0 +1,44 @@
+DROP TABLE IF EXISTS test_table;
+NOTICE:  table "test_table" does not exist, skipping
+CREATE TABLE test_table (
+    id SERIAL PRIMARY KEY,
+    category INT,
+    payload TEXT
+);
+INSERT INTO test_table (category, payload)
+SELECT (i % 1000) + 1, 'some text data ' || i
+FROM generate_series(1, 1000000) AS i;
+CREATE INDEX idx_category ON test_table(category);
+ANALYZE test_table;
+EXPLAIN ANALYZE SELECT * FROM test_table WHERE category BETWEEN 100 AND 200;
+                                                            QUERY PLAN                                                            
+----------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on test_table  (cost=1463.54..10456.59 rows=105670 width=29) (actual time=3.632..14.580 rows=101000 loops=1)
+   Recheck Cond: ((category >= 100) AND (category <= 200))
+   Heap Blocks: exact=1741
+   ->  Bitmap Index Scan on idx_category  (cost=0.00..1437.12 rows=105670 width=0) (actual time=3.452..3.452 rows=101000 loops=1)
+         Index Cond: ((category >= 100) AND (category <= 200))
+ Planning Time: 0.197 ms
+ Execution Time: 17.227 ms
+(7 rows)
+
+ALTER SYSTEM SET autovacuum = off;
+SELECT pg_reload_conf();
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+UPDATE test_table SET category = 500 WHERE id <= 500000;
+EXPLAIN ANALYZE SELECT * FROM test_table WHERE category BETWEEN 100 AND 200;
+                                                            QUERY PLAN                                                            
+----------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on test_table  (cost=2173.10..15662.68 rows=158505 width=29) (actual time=20.903..26.496 rows=50500 loops=1)
+   Recheck Cond: ((category >= 100) AND (category <= 200))
+   Heap Blocks: exact=871
+   ->  Bitmap Index Scan on idx_category  (cost=0.00..2133.48 rows=158505 width=0) (actual time=2.994..2.994 rows=101000 loops=1)
+         Index Cond: ((category >= 100) AND (category <= 200))
+ Planning Time: 0.078 ms
+ Execution Time: 27.843 ms
+(7 rows)
+
