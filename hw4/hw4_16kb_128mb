@@ -1,0 +1,93 @@
+SELECT current_setting('block_size');
+ current_setting 
+-----------------
+ 16384
+(1 row)
+
+\c postgres
+-- 1
+CREATE DATABASE pgbench;
+SHOW shared_buffers;
+ shared_buffers 
+----------------
+ 128MB
+(1 row)
+
+SELECT pg_reload_conf();
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+\! pgbench -i -s 1000 -U postgres -q pgbench
+dropping old tables...
+NOTICE:  table "pgbench_accounts" does not exist, skipping
+NOTICE:  table "pgbench_branches" does not exist, skipping
+NOTICE:  table "pgbench_history" does not exist, skipping
+NOTICE:  table "pgbench_tellers" does not exist, skipping
+creating tables...
+generating data (client-side)...
+6590900 of 100000000 tuples (6%) done (elapsed 5.00 s, remaining 70.92 s)
+13223000 of 100000000 tuples (13%) done (elapsed 10.00 s, remaining 65.63 s)
+20181500 of 100000000 tuples (20%) done (elapsed 15.00 s, remaining 59.33 s)
+27280400 of 100000000 tuples (27%) done (elapsed 20.00 s, remaining 53.31 s)
+34347800 of 100000000 tuples (34%) done (elapsed 25.00 s, remaining 47.79 s)
+41419500 of 100000000 tuples (41%) done (elapsed 30.00 s, remaining 42.43 s)
+48569900 of 100000000 tuples (48%) done (elapsed 35.00 s, remaining 37.06 s)
+55457000 of 100000000 tuples (55%) done (elapsed 40.00 s, remaining 32.13 s)
+62599300 of 100000000 tuples (62%) done (elapsed 45.00 s, remaining 26.89 s)
+69681100 of 100000000 tuples (69%) done (elapsed 50.00 s, remaining 21.76 s)
+76824900 of 100000000 tuples (76%) done (elapsed 55.00 s, remaining 16.59 s)
+83818100 of 100000000 tuples (83%) done (elapsed 60.00 s, remaining 11.58 s)
+90919000 of 100000000 tuples (90%) done (elapsed 65.00 s, remaining 6.49 s)
+98023500 of 100000000 tuples (98%) done (elapsed 70.00 s, remaining 1.41 s)
+100000000 of 100000000 tuples (100%) done (elapsed 71.40 s, remaining 0.00 s)
+vacuuming...
+creating primary keys...
+done in 102.55 s (drop tables 0.00 s, create tables 0.00 s, client-side generate 72.56 s, vacuum 0.34 s, primary keys 29.65 s).
+\c pgbench
+SELECT pg_stat_reset();
+ pg_stat_reset 
+---------------
+ 
+(1 row)
+
+\! pgbench -c 100 -j 100 -U postgres -T 100 -P 10 -S pgbench
+pgbench (15.5)
+starting vacuum...end.
+progress: 10.0 s, 25401.2 tps, lat 3.919 ms stddev 1.307, 0 failed
+progress: 20.0 s, 25894.7 tps, lat 3.861 ms stddev 1.369, 0 failed
+progress: 30.0 s, 25231.4 tps, lat 3.963 ms stddev 2.227, 0 failed
+progress: 40.0 s, 25706.0 tps, lat 3.890 ms stddev 3.028, 0 failed
+progress: 50.0 s, 26236.5 tps, lat 3.811 ms stddev 1.644, 0 failed
+progress: 60.0 s, 26686.5 tps, lat 3.747 ms stddev 2.214, 0 failed
+progress: 70.0 s, 26126.6 tps, lat 3.827 ms stddev 1.859, 0 failed
+progress: 80.0 s, 26371.9 tps, lat 3.792 ms stddev 2.588, 0 failed
+progress: 90.0 s, 26162.9 tps, lat 3.822 ms stddev 2.049, 0 failed
+transaction type: <builtin: select only>
+scaling factor: 1000
+query mode: simple
+number of clients: 100
+number of threads: 100
+maximum number of tries: 1
+duration: 100 s
+number of transactions actually processed: 2602541
+number of failed transactions: 0 (0.000%)
+latency average = 3.840 ms
+latency stddev = 2.066 ms
+initial connection time = 44.829 ms
+tps = 26031.756803 (without initial connection time)
+SELECT datname,
+       CASE WHEN (sum(blks_hit) + sum(blks_read)) = 0 THEN 0
+            ELSE (sum(blks_hit)::float / (sum(blks_hit) + sum(blks_read)))
+       END AS cache_hit_ratio
+FROM pg_stat_database
+WHERE datname = 'pgbench'
+GROUP BY datname;
+ datname |  cache_hit_ratio   
+---------+--------------------
+ pgbench | 0.5090211822368145
+(1 row)
+
+\c postgres
+DROP DATABASE pgbench;
